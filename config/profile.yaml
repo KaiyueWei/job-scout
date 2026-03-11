@@ -1,0 +1,83 @@
+# Job Scout Configuration
+# Edit this file to match your job search criteria
+
+profile:
+  name: "Kaiyue Wei"
+  email: "kaiyue.wei@outlook.com"
+  github_username: "KaiyueWei"
+  
+search:
+  # Keywords to search for (OR logic — any match counts)
+  keywords:
+    - "software engineer intern"
+    - "software developer intern"
+    - "software engineer co-op"
+    - "software developer co-op"
+    - "backend engineer intern"
+    - "backend developer intern"
+    - "devops engineer intern"
+    - "devops co-op"
+    - "SRE intern"
+    - "platform engineer intern"
+    - "systems engineer intern"
+    - "cloud engineer intern"
+  
+  # Locations to search (jobs must match at least one)
+  locations:
+    - "Vancouver"
+    - "Toronto"
+    - "Montreal"
+    - "Calgary"
+    - "Ottawa"
+    - "Canada"
+    - "Remote"
+    - "San Francisco"
+    - "Seattle"
+    - "New York"
+    - "Austin"
+    - "United States"
+  
+  # Only include jobs posted within this many hours
+  max_age_hours: 24
+  
+  # Minimum fit score (1-10) to include in digest
+  min_score: 5
+  
+  # Minimum score to auto-generate tailored resume
+  tailor_threshold: 7
+
+scoring:
+  # Your profile summary for the LLM scorer
+  candidate_profile: |
+    Master's student in Computer Science (4.0 GPA) at Northeastern University, Vancouver.
+    Strong backend/systems skills: Go, Node.js/TypeScript, Python.
+    Key experiences:
+    - Backend developer at Innova Tickets: multi-tenant ticketing platform (Node.js, Express, TypeScript, PostgreSQL, Redis, Stripe Connect, Python/FastAPI AI microservices)
+    - Ride-Sharing Microservices project: Go, RabbitMQ, Kubernetes, Docker, Jaeger (distributed tracing)
+    - Open-source contribution to HashiCorp Terraform AWS Provider (Go, CI/CD)
+    - eBPF kernel security observability research (AWS EC2, CloudWatch)
+    - CyberSci Regional 2025-26: reverse engineering (Ghidra), digital forensics, OWASP
+    - Teaching Assistant for Operating Systems course
+    - 6 years prior experience as an IP lawyer (differentiator for compliance/analyst roles)
+    Tech stack: Go, Python, TypeScript/Node.js, PostgreSQL, Redis, MongoDB, Docker, Kubernetes, AWS, GCP, Terraform, eBPF, RabbitMQ, gRPC, REST APIs, CI/CD (GitHub Actions, Jenkins)
+    Location: Vancouver, BC. Open to remote roles across North America.
+    Seeking: Co-op or internship, 4-8 months, starting ASAP.
+  
+  # Resume variants available
+  resume_variants:
+    - name: "backend_sde"
+      description: "Pure backend/systems engineering — lead with Go, distributed systems, minimize legal"
+    - name: "devops_sre"  
+      description: "DevOps/SRE/Platform — lead with Terraform, K8s, Docker, CI/CD, cloud infra"
+    - name: "fullstack"
+      description: "Full-stack — balance backend with Innova Tickets frontend work"
+    - name: "cyber_risk"
+      description: "Cybersecurity/compliance — expand legal background, CyberSci, eBPF security"
+
+email:
+  # Recipient for the digest
+  to: "kaiyue.wei@outlook.com"
+  subject_prefix: "[Job Scout]"
+  # Schedule labels (for email subject)
+  morning_label: "Morning"
+  evening_label: "Evening"

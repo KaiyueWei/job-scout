@@ -1,0 +1,49 @@
+name: Job Scout Pipeline
+
+on:
+  schedule:
+    # 8:00 AM Pacific (16:00 UTC)
+    - cron: '0 16 * * *'
+    # 6:00 PM Pacific (02:00 UTC next day)
+    - cron: '0 2 * * *'
+  workflow_dispatch: # Manual trigger
+
+jobs:
+  scout:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Install LaTeX (for resume tailoring)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y texlive-latex-base texlive-latex-extra texlive-fonts-recommended texlive-latex-recommended
+
+      - name: Run Job Scout
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          GMAIL_ADDRESS: ${{ secrets.GMAIL_ADDRESS }}
+          GMAIL_APP_PASSWORD: ${{ secrets.GMAIL_APP_PASSWORD }}
+          ADZUNA_APP_ID: ${{ secrets.ADZUNA_APP_ID }}
+          ADZUNA_APP_KEY: ${{ secrets.ADZUNA_APP_KEY }}
+        run: python src/main.py
+
+      - name: Upload artifacts (tailored resumes)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: tailored-resumes-${{ github.run_number }}
+          path: output/*.pdf
+          retention-days: 30

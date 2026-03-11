@@ -1,0 +1,143 @@
+\documentclass[letterpaper,11pt]{article}
+
+\usepackage{latexsym}
+\usepackage[empty]{fullpage}
+\usepackage{titlesec}
+\usepackage{marvosym}
+\usepackage[usenames,dvipsnames]{color}
+\usepackage{verbatim}
+\usepackage{enumitem}
+\usepackage[draft]{hyperref}
+\usepackage{fancyhdr}
+\usepackage[english]{babel}
+\usepackage{tabularx}
+\input{glyphtounicode}
+
+\pagestyle{fancy}
+\fancyhf{}
+\fancyfoot{}
+\renewcommand{\headrulewidth}{0pt}
+\renewcommand{\footrulewidth}{0pt}
+
+\addtolength{\oddsidemargin}{-0.5in}
+\addtolength{\evensidemargin}{-0.5in}
+\addtolength{\textwidth}{1in}
+\addtolength{\topmargin}{-.5in}
+\addtolength{\textheight}{1.0in}
+
+\urlstyle{same}
+\raggedbottom
+\raggedright
+\setlength{\tabcolsep}{0in}
+
+\titleformat{\section}{
+  \vspace{-4pt}\scshape\raggedright\large
+}{}{0em}{}[\titlerule \vspace{-5pt}]
+
+\pdfgentounicode=1
+
+\newcommand{\resumeItem}[1]{\item\small{#1 \vspace{-2pt}}}
+\newcommand{\resumeSubheading}[4]{
+  \vspace{-2pt}\item
+    \begin{tabular*}{0.97\textwidth}[t]{l@{\extracolsep{\fill}}r}
+      \textbf{#1} & #2 \\
+      \textit{\small#3} & \textit{\small #4} \\
+    \end{tabular*}\vspace{-7pt}
+}
+\newcommand{\resumeProjectHeading}[2]{
+    \item
+    \begin{tabular*}{0.97\textwidth}{l@{\extracolsep{\fill}}r}
+      \small#1 & #2 \\
+    \end{tabular*}\vspace{-7pt}
+}
+\newcommand{\resumeSubItem}[1]{\resumeItem{#1}\vspace{-4pt}}
+\renewcommand\labelitemii{$\vcenter{\hbox{\tiny$\bullet$}}$}
+\newcommand{\resumeSubHeadingListStart}{\begin{itemize}[leftmargin=0.15in, label={}]}
+\newcommand{\resumeSubHeadingListEnd}{\end{itemize}}
+\newcommand{\resumeItemListStart}{\begin{itemize}}
+\newcommand{\resumeItemListEnd}{\end{itemize}\vspace{-5pt}}
+
+\begin{document}
+
+%----------HEADING----------
+\begin{center}
+    \textbf{\Huge \scshape Kaiyue Wei} \\ \vspace{1pt}
+    \small kaiyue.wei@outlook.com $|$ kaiyuewei.me $|$ github.com/KaiyueWei $|$ 236-979-1518
+\end{center}
+
+%-----------SUMMARY (auto-tailored)-----------
+\vspace{-6pt}
+\begin{center}
+\small {{SUMMARY}}
+\end{center}
+
+%-----------EDUCATION-----------
+\section{Education}
+\resumeSubHeadingListStart
+    \resumeSubheading
+      {Northeastern University (Canada)}{Sep 2024 -- Present}
+      {Master of Science in Computer Science (GPA: 4.0 / 4.0)}{Vancouver, BC}
+\resumeSubHeadingListEnd
+
+%-----------PROJECTS-----------
+\section{Projects}
+\resumeSubHeadingListStart
+    \resumeProjectHeading
+      {\textbf{Ride-Sharing Microservices Backend} $|$ \emph{Go, REST APIs, RabbitMQ, Kubernetes, Docker, Jaeger}}{Jan 2026 -- Present}
+    \resumeItemListStart
+        \resumeItem{Designed a horizontally scalable ride-sharing platform as 4 independently deployable Go microservices with clean service boundaries, serving RESTful and WebSocket endpoints through a unified API Gateway.}
+        \resumeItem{Engineered fault-tolerant inter-service communication by implementing event-driven messaging with RabbitMQ, decoupling trip scheduling to handle asynchronous driver matching and payment processing under concurrent load.}
+        \resumeItem{Enabled zero-downtime deployments by orchestrating services on Kubernetes with Docker, and instrumented distributed tracing with Jaeger for end-to-end request visibility and performance debugging.}
+    \resumeItemListEnd
+
+    \resumeProjectHeading
+      {\textbf{Open-Source: Terraform AWS Provider Optimization} $|$ \emph{Go, AWS S3, CI/CD}}{Sep 2025 -- Dec 2025}
+    \resumeItemListStart
+        \resumeItem{Reduced CI/CD pipeline execution time by 2.5$\times$ by diagnosing intermittent failures caused by tail-latency outliers in AWS S3 lifecycle propagation, analyzing eventual-consistency behavior across distributed storage nodes.}
+        \resumeItem{Designed a tail-latency--tolerant adaptive waiter in Go that relaxes strict timing assumptions, lowering unnecessary API calls while preserving fast-path completion for 99\% of common-case executions.}
+    \resumeItemListEnd
+\resumeSubHeadingListEnd
+
+%-----------WORK EXPERIENCE-----------
+\section{Work Experience}
+\resumeSubHeadingListStart
+    \resumeSubheading
+      {Canadian Museums / Innova Tickets}{Feb 2026 -- Present}
+      {Backend Developer}{Vancouver, BC}
+    \resumeItemListStart
+        \resumeItem{Engineering a RESTful API designed to serve 500+ cultural institutions, processing multi-currency ticket purchases with dynamic commission tiers using Node.js, TypeScript, Express, MongoDB, and Stripe Connect webhooks.}
+        \resumeItem{Implementing secure QR-based ticket validation supporting 5 concurrent scanners per venue with real-time WebSocket status updates, JWT-signed tokens, Redis distributed locks, and MongoDB atomic state transitions.}
+        \resumeItem{Accelerated feature delivery by integrating AI-assisted code generation and debugging workflows with Cursor and Claude, reducing boilerplate development time across API endpoints and test scaffolding.}
+    \resumeItemListEnd
+
+    \resumeSubheading
+      {Northeastern University}{Sep 2025 -- Present}
+      {Teaching Assistant, Computer Systems}{Vancouver, BC}
+    \resumeItemListStart
+        \resumeItem{Conduct weekly code reviews and mentor 30+ students on systems programming, memory management, and debugging strategies, reinforcing clean code practices and architectural reasoning.}
+    \resumeItemListEnd
+
+    \resumeSubheading
+      {Beijing Weiheng / Zhejiang Kaiwang Law Firm}{Jan 2018 -- Jul 2024}
+      {Lawyer, Intellectual Property}{}
+\resumeSubHeadingListEnd
+
+%-----------HACKATHON-----------
+\section{Hackathon}
+\resumeSubHeadingListStart
+    \resumeProjectHeading
+      {\textbf{CyberSci Regional 2025--26}}{Nov 2025}
+    \resumeItemListStart
+        \resumeItem{Ranked 6th of 15 regionally and 38th of 86 nationally. Reverse-engineered legacy MS-DOS executables using Ghidra to identify vulnerabilities and decrypt secured data payloads.}
+    \resumeItemListEnd
+\resumeSubHeadingListEnd
+
+%-----------SKILLS (auto-tailored)-----------
+\section{Skills}
+\begin{itemize}[leftmargin=0.15in, label={}]
+    \small{\item{
+        {{SKILLS_LINE}}
+    }}
+\end{itemize}
+
+\end{document}

@@ -1,0 +1,39 @@
+name: Weekly Repo Scan
+
+on:
+  schedule:
+    # Every Sunday at 10:00 AM Pacific (18:00 UTC)
+    - cron: '0 18 * * 0'
+  workflow_dispatch: # Manual trigger
+
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run Repo Scanner
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_USERNAME: ${{ vars.GITHUB_USERNAME || 'KaiyueWei' }}
+        run: python src/scan_repos_cli.py
+
+      - name: Commit updated profile and cache
+        run: |
+          git config user.name "Job Scout Bot"
+          git config user.email "bot@job-scout.local"
+          git add config/profile.yaml output/repo_cache.json
+          git diff --staged --quiet || git commit -m "chore: weekly repo scan update"
+          git push
