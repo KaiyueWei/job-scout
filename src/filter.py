@@ -33,6 +33,16 @@ REMOTE_PATTERNS = [
     r'\bdistributed\b', r'\bfully remote\b',
 ]
 
+# Locations outside North America — exclude these even if "remote" is mentioned
+EXCLUDE_LOCATION_PATTERNS = [
+    r'\bgermany\b', r'\bdeutschland\b', r'\bberlin\b', r'\bmunich\b', r'\bhamburg\b',
+    r'\bfrankfurt\b', r'\bstuttgart\b', r'\bcologne\b',
+    r'\bunited kingdom\b', r'\buk\b', r'\blondon\b', r'\bmanchester\b',
+    r'\baustralia\b', r'\bsydney\b', r'\bmelbourne\b',
+    r'\bindia\b', r'\bbangalore\b', r'\bmumbai\b',
+    r'\beurope\b', r'\beu\b',
+]
+
 
 def load_seen_jobs() -> set[str]:
     """Load previously seen job IDs from cache file."""
@@ -64,6 +74,12 @@ def save_seen_jobs(seen: dict):
 def _matches_location(job: JobListing) -> bool:
     """Check if job location matches North America + remote criteria."""
     text = f"{job.location} {job.title} {job.description[:500]}".lower()
+
+    # Exclude jobs explicitly tied to non-North-America locations
+    location_text = job.location.lower()
+    for pattern in EXCLUDE_LOCATION_PATTERNS:
+        if re.search(pattern, location_text, re.IGNORECASE):
+            return False
 
     # Check Canada locations
     for pattern in CANADA_PATTERNS:
