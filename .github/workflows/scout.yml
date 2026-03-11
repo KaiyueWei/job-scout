@@ -38,7 +38,7 @@ jobs:
           GMAIL_APP_PASSWORD: ${{ secrets.GMAIL_APP_PASSWORD }}
           ADZUNA_APP_ID: ${{ secrets.ADZUNA_APP_ID }}
           ADZUNA_APP_KEY: ${{ secrets.ADZUNA_APP_KEY }}
-        run: python src/main.py
+        run: python -m src.main
 
       - name: Upload artifacts (tailored resumes)
         if: always()
