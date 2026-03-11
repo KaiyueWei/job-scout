@@ -95,7 +95,10 @@ def _is_recent(job: JobListing, max_age_hours: int) -> bool:
         return True
 
     cutoff = datetime.now(timezone.utc) - timedelta(hours=max_age_hours)
-    return job.posted_at >= cutoff
+    posted_at = job.posted_at
+    if posted_at.tzinfo is None:
+        posted_at = posted_at.replace(tzinfo=timezone.utc)
+    return posted_at >= cutoff
 
 
 def _is_likely_intern_coop(job: JobListing) -> bool:
