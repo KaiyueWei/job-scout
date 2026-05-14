@@ -1,147 +1,174 @@
 """
-Scorer module.
-Uses Claude API to score each job listing against the candidate profile
-and recommend a resume variant.
+LLM scorer using LangChain + GPT-4o-mini with Pydantic structured output.
+
+Mirrors the design of llm_analysis.py in pietroruzzante/linkedin_scraper_pipeline.
 """
+
+from __future__ import annotations
 
 import json
 import logging
 import os
 from dataclasses import dataclass
-from typing import Optional
 
-import anthropic
+from langchain_core.prompts import ChatPromptTemplate
+from langchain_openai import ChatOpenAI
+from pydantic import BaseModel, Field
 
+from src.prompts import EXTRACT_KEYWORDS_PROMPT, RANK_OFFERS_PROMPT
 from src.scraper import JobListing
 
 logger = logging.getLogger(__name__)
 
 
+class ScoredOffer(BaseModel):
+    id: int = Field(description="Unique identifier of the job offer")
+    title: str = Field(description="Job title")
+    company: str = Field(description="Company name")
+    link: str = Field(description="URL of the job offer")
+    score: int = Field(ge=1, le=10, description="Relevance score, 1-10")
+    comment: str = Field(description="Brief explanation of the score, 1 sentence")
+    summary: str = Field(description="Brief summary of the offer, 2-3 sentences")
+
+
+class RankedOffers(BaseModel):
+    offers: list[ScoredOffer]
+
+
+class KeywordList(BaseModel):
+    keywords: list[str]
+
+
 @dataclass
 class ScoredJob:
-    """Job listing with fit score and recommendations."""
+    """Job listing enriched with LLM score and metadata."""
+
     listing: JobListing
-    score: int  # 1-10
-    variant: str  # Recommended resume variant
-    reasoning: str  # Why this score
-    tailoring_notes: str  # Specific suggestions for tailoring
+    score: int
+    comment: str
+    summary: str
+    keywords: list[str]
 
 
-SCORING_PROMPT = """You are evaluating a job listing against a candidate profile for fit.
-
-<candidate_profile>
-{profile}
-</candidate_profile>
-
-<job_listing>
-Title: {title}
-Company: {company}
-Location: {location}
-Source: {source}
-
-Description:
-{description}
-</job_listing>
-
-<available_resume_variants>
-{variants}
-</available_resume_variants>
-
-Evaluate this job listing and respond with ONLY a JSON object (no markdown, no backticks):
-{{
-    "score": <1-10 integer>,
-    "variant": "<recommended variant name from the list above>",
-    "reasoning": "<1-2 sentences explaining the score>",
-    "tailoring_notes": "<specific keywords, skills, or experiences to emphasize in the resume for this role>"
-}}
-
-Scoring criteria:
-- 9-10: Almost perfect match — role matches core skills, level is right, location works
-- 7-8: Strong match — most requirements align, minor gaps
-- 5-6: Decent match — some alignment but notable gaps or uncertainty
-- 3-4: Weak match — significant misalignment in skills or level
-- 1-2: Poor match — wrong field, wrong level, or clearly not suitable
-
-Be honest and calibrated. Most intern/co-op SDE roles for this candidate should score 6-8.
-A role requiring 3+ years experience should score lower. A Go/distributed systems role should score higher."""
+def _llm(model: str = "gpt-4o-mini") -> ChatOpenAI:
+    return ChatOpenAI(model=model, temperature=0, model_kwargs={"seed": 42})
 
 
-def score_jobs(
-    jobs: list[JobListing],
-    config: dict,
-) -> list[ScoredJob]:
-    """Score each job listing using Claude API."""
-    api_key = os.environ.get("ANTHROPIC_API_KEY")
-    if not api_key:
-        logger.error("ANTHROPIC_API_KEY not set — skipping scoring")
-        # Return all jobs with default score
-        return [
-            ScoredJob(
-                listing=job,
-                score=5,
-                variant="backend_sde",
-                reasoning="Scoring unavailable (no API key)",
-                tailoring_notes="",
-            )
-            for job in jobs
-        ]
-
-    client = anthropic.Anthropic(api_key=api_key)
-    profile = config.get("scoring", {}).get("candidate_profile", "")
-    variants_list = config.get("scoring", {}).get("resume_variants", [])
-    variants_str = "\n".join(
-        f"- {v['name']}: {v['description']}" for v in variants_list
+def _rank_chain():
+    return (
+        ChatPromptTemplate.from_messages(
+            [("system", RANK_OFFERS_PROMPT), ("human", "{offers}")]
+        )
+        | _llm().with_structured_output(RankedOffers, method="function_calling")
     )
 
-    scored = []
-    for i, job in enumerate(jobs):
-        logger.info(f"Scoring {i+1}/{len(jobs)}: {job.title} @ {job.company}")
+
+def _keywords_chain():
+    return (
+        ChatPromptTemplate.from_messages(
+            [("system", EXTRACT_KEYWORDS_PROMPT), ("human", "{offer_description}")]
+        )
+        | _llm().with_structured_output(KeywordList, method="function_calling")
+    )
+
+
+def _offers_payload(jobs: list[JobListing]) -> list[dict]:
+    """Build a minimal JSON-serializable payload for the LLM."""
+    return [
+        {
+            "id": i,
+            "title": j.title,
+            "company": j.company,
+            "location": j.location,
+            "link": j.url,
+            "description": j.description[:3000],
+        }
+        for i, j in enumerate(jobs)
+    ]
+
+
+def rank_offers(
+    jobs: list[JobListing],
+    role: str,
+    candidate_profile: str,
+    cv_text: str,
+    priority_keywords: list[str],
+) -> list[ScoredJob]:
+    """Rank a batch of offers with the LLM."""
+    if not jobs:
+        return []
+    if not os.environ.get("OPENAI_API_KEY"):
+        logger.error("OPENAI_API_KEY not set — skipping LLM ranking")
+        return []
+
+    logger.info(f"Requesting LLM ranking of {len(jobs)} offers")
+    result = _rank_chain().invoke(
+        {
+            "role": role,
+            "candidate_profile": candidate_profile,
+            "cv": cv_text,
+            "priority_keywords": json.dumps(priority_keywords),
+            "offers": json.dumps(_offers_payload(jobs)),
+        }
+    )
+    if isinstance(result, dict):
+        result = RankedOffers(**result)
+
+    scored: list[ScoredJob] = []
+    for offer in result.offers:
         try:
-            prompt = SCORING_PROMPT.format(
-                profile=profile,
-                title=job.title,
-                company=job.company,
-                location=job.location,
-                source=job.source,
-                description=job.description[:3000],  # Truncate long descriptions
-                variants=variants_str,
+            listing = jobs[offer.id]
+        except IndexError:
+            logger.warning(f"LLM returned out-of-range id {offer.id}; skipping")
+            continue
+        scored.append(
+            ScoredJob(
+                listing=listing,
+                score=offer.score,
+                comment=offer.comment,
+                summary=offer.summary,
+                keywords=[],
             )
+        )
 
-            response = client.messages.create(
-                model="claude-sonnet-4-20250514",
-                max_tokens=500,
-                messages=[{"role": "user", "content": prompt}],
-            )
-
-            text = response.content[0].text.strip()
-            # Clean potential markdown fences
-            text = text.removeprefix("```json").removeprefix("```").removesuffix("```").strip()
-
-            data = json.loads(text)
-
-            scored.append(ScoredJob(
-                listing=job,
-                score=int(data.get("score", 5)),
-                variant=data.get("variant", "backend_sde"),
-                reasoning=data.get("reasoning", ""),
-                tailoring_notes=data.get("tailoring_notes", ""),
-            ))
-
-        except json.JSONDecodeError as e:
-            logger.warning(f"Failed to parse scoring response for {job.title}: {e}")
-            scored.append(ScoredJob(
-                listing=job, score=5, variant="backend_sde",
-                reasoning="Parse error", tailoring_notes="",
-            ))
-        except Exception as e:
-            logger.warning(f"Scoring failed for {job.title}: {e}")
-            scored.append(ScoredJob(
-                listing=job, score=5, variant="backend_sde",
-                reasoning=f"Error: {e}", tailoring_notes="",
-            ))
-
-    # Sort by score descending
     scored.sort(key=lambda s: s.score, reverse=True)
-    logger.info(f"Scoring complete. Top score: {scored[0].score if scored else 'N/A'}")
-
+    if scored:
+        logger.info(f"Ranking done. Top score: {scored[0].score}")
     return scored
+
+
+def extract_keywords(description: str) -> list[str]:
+    """Run the ATS keyword extraction chain on a single JD."""
+    if not description.strip():
+        return []
+    result = _keywords_chain().invoke({"offer_description": description})
+    if isinstance(result, dict):
+        result = KeywordList(**result)
+    logger.info(f"  → keywords: {result.keywords}")
+    return result.keywords
+
+
+def score_jobs(jobs: list[JobListing], config: dict) -> list[ScoredJob]:
+    """Top-level entry point used by main.py."""
+    scoring = config.get("scoring", {})
+    search = config.get("search", {})
+    role = (search.get("roles") or search.get("keywords") or ["software engineer"])[0]
+    profile = scoring.get("candidate_profile", "")
+    priority_keywords = search.get("priority_keywords", [])
+
+    cv_text = ""
+    cv_path = os.environ.get("CV_PATH")
+    if cv_path and os.path.exists(cv_path):
+        from src.cv_parser import parse_cv
+
+        cv_text = parse_cv(cv_path)
+    else:
+        logger.warning("CV_PATH not set or file missing — ranking without CV text")
+
+    return rank_offers(
+        jobs=jobs,
+        role=role,
+        candidate_profile=profile,
+        cv_text=cv_text,
+        priority_keywords=priority_keywords,
+    )

@@ -1,76 +1,82 @@
 # Job Scout Pipeline
 
-Automated job discovery, scoring, and resume tailoring for SDE/DevOps co-op and internship roles. Runs twice daily on GitHub Actions (free).
+Automated job discovery, LLM ranking, and CV tailoring for SDE/DevOps co-op
+and internship roles. Runs twice daily on GitHub Actions (free).
 
 ## What It Does
 
-1. **Scouts** — Polls free job APIs (Indeed RSS, Adzuna, Remotive, Arbeitnow) for new postings matching your criteria
-2. **Filters** — Deduplicates, filters by location (North America, remote-Canada), recency (last 24h)
-3. **Scores** — Sends each JD to Claude API to get a fit score (1-10) and recommended resume variant
-4. **Tailors** — For high-scoring matches (7+), auto-generates a tailored resume using your LaTeX template
-5. **Emails** — Sends a twice-daily digest with scored listings and attached tailored resumes
-6. **Repo Scan (weekly)** — Scans your GitHub repos every Sunday, detects new/updated projects, extracts tech stacks, and auto-updates your candidate profile so the scorer always reflects your latest work
+1. **Scrape** — Queries LinkedIn's public guest jobs API and parses results
+   with BeautifulSoup (one search per role × location).
+2. **Filter** — Deduplicates by URL, drops jobs seen in the last 7 days, and
+   pre-filters out blacklisted keywords (e.g. *principal*, *10+ years*).
+3. **Rank** — Sends the batch to `gpt-4o-mini` via LangChain with Pydantic
+   structured output; gets a 1–10 score, comment, and summary per offer.
+4. **ATS keywords** — For each high-score offer, a second LLM call extracts
+   up to 10 hard-skill keywords from the JD.
+5. **Tailor** — Fills five placeholders in a DOCX CV template with role,
+   competencies, libraries, languages, and tools chosen from your profile's
+   skill lists. Converts to PDF via CloudConvert (ConvertAPI fallback).
+6. **Email** — Sends a twice-daily Gmail digest with the ranked list and
+   tailored PDFs attached.
 
 ## Architecture
 
 ```
-GitHub Actions (cron: 8am, 6pm PT — daily)
+GitHub Actions (cron: 8am, 6pm PT)
   │
-  ├── src/scraper.py        — Fetch jobs from free APIs
-  ├── src/filter.py          — Deduplicate, location/recency filter
-  ├── src/scorer.py          — Claude API scoring + resume variant recommendation
-  ├── src/tailor.py          — LaTeX resume generation per match
-  ├── src/emailer.py         — Gmail SMTP digest sender
-  └── src/main.py            — Orchestrator
-
-GitHub Actions (cron: Sundays — weekly)
-  │
-  ├── src/repo_scanner.py    — Scan GitHub repos, extract tech stacks
-  └── src/scan_repos_cli.py  — Update profile.yaml with latest skills
+  ├── src/scraper.py     — LinkedIn guest API + BeautifulSoup
+  ├── src/filter.py      — Dedup, seen-jobs cache, exclude-keyword pre-filter
+  ├── src/scorer.py      — LangChain + GPT-4o-mini ranking (Pydantic output)
+  ├── src/cv_parser.py   — Reads your PDF CV with pypdf for ranking context
+  ├── src/prompts.py     — LLM prompt templates (rank, keywords, placeholders)
+  ├── src/tailor.py      — python-docx placeholder fill + CloudConvert → PDF
+  ├── src/emailer.py     — Gmail SMTP digest with PDF attachments
+  └── src/main.py        — Orchestrator
 ```
 
 ## Setup
 
-### 1. Fork/Clone This Repo
+### 1. Fork / Clone
 
 ```bash
 git clone https://github.com/YOUR_USERNAME/job-scout.git
 cd job-scout
 ```
 
-### 2. Get API Keys (All Free Tier)
+### 2. API Keys
 
-| Service | Purpose | Free Tier | Sign Up |
-|---------|---------|-----------|---------|
-| Adzuna | Job listings | 250 req/day | https://developer.adzuna.com |
-| Anthropic | JD scoring | Pay-per-use (~$0.50/day) | https://console.anthropic.com |
-| Gmail App Password | Email delivery | Free | Google Account → Security → App Passwords |
+| Service       | Purpose                          | Free Tier                |
+| ------------- | -------------------------------- | ------------------------ |
+| OpenAI        | LLM ranking + placeholder fill   | Pay-as-you-go            |
+| CloudConvert  | DOCX → PDF (primary)             | 25 conv/day              |
+| ConvertAPI    | DOCX → PDF (fallback)            | Free tier available      |
+| Gmail App PW  | Email delivery                   | Free                     |
 
-**Note:** Adzuna is optional. The pipeline works with Indeed RSS + Arbeitnow (no keys needed) alone.
+### 3. GitHub Secrets
 
-### 3. Configure GitHub Secrets
+Repo → Settings → Secrets and variables → Actions:
 
-Go to your repo → Settings → Secrets and variables → Actions, and add:
+| Secret                  | Required? | Value                              |
+| ----------------------- | --------- | ---------------------------------- |
+| `OPENAI_API_KEY`        | Yes       | OpenAI API key                     |
+| `GMAIL_ADDRESS`         | Yes       | Gmail address                      |
+| `GMAIL_APP_PASSWORD`    | Yes       | Gmail App Password                 |
+| `CLOUDCONVERT_API_KEY`  | One of    | CloudConvert API key               |
+| `CONVERTAPI_SECRET`     | One of    | ConvertAPI secret (fallback)       |
 
-| Secret | Required? | Value |
-|--------|-----------|-------|
-| `ANTHROPIC_API_KEY` | Yes | Your Anthropic API key |
-| `GMAIL_ADDRESS` | Yes | Your Gmail address |
-| `GMAIL_APP_PASSWORD` | Yes | Gmail App Password (not your regular password) |
-| `ADZUNA_APP_ID` | Optional | Adzuna application ID |
-| `ADZUNA_APP_KEY` | Optional | Adzuna API key |
+### 4. Profile + CV
 
-### 4. Configure Your Profile
+- Edit `config/profile.yaml`: roles, locations, exclude/priority keywords,
+  candidate profile, and the four skill lists used to fill the DOCX CV.
+- Place `templates/cv.pdf` (your existing CV — used as ranking context).
+- Place `templates/cv_template.docx` with `{{ROLE}}`, `{{CORE_COMPETENCIES}}`,
+  `{{LIBRARIES}}`, `{{LANGUAGES}}`, `{{TOOLS}}` placeholders. See
+  `templates/README.md`.
 
-Edit `config/profile.yaml` with your details, target roles, and keywords.
+### 5. Run
 
-### 5. Add Your Resume Template
-
-Replace `templates/base_resume.tex` with your LaTeX resume template. Use `{{SUMMARY}}`, `{{EXPERIENCE_BULLETS}}`, and `{{SKILLS_LINE}}` placeholders where you want auto-tailoring to happen.
-
-### 6. Enable GitHub Actions
-
-Push to `main` branch. The workflow runs automatically at 8am and 6pm Pacific. You can also trigger manually from the Actions tab.
+Push to `main`. The workflow runs at 8am and 6pm Pacific. Manual triggers
+are available in the Actions tab.
 
 ## Local Development
 
@@ -79,14 +85,16 @@ python -m venv venv
 source venv/bin/activate
 pip install -r requirements.txt
 
-# Run once locally
-python src/main.py
+cp .env.example .env  # then fill in keys
+python -m src.main
 ```
+
+`.env` keys: `OPENAI_API_KEY`, `GMAIL_ADDRESS`, `GMAIL_APP_PASSWORD`,
+`CLOUDCONVERT_API_KEY` (or `CONVERTAPI_SECRET`), `CV_PATH`, `CV_TEMPLATE_PATH`.
 
 ## Cost Estimate
 
-- **GitHub Actions:** Free (2,000 min/month on free tier; each run ~3-5 min)
-- **Adzuna API:** Free (250 requests/day)
-- **Claude API:** ~$0.30-0.80/day depending on number of listings scored
+- **GitHub Actions:** Free (≈ 5 min/run × 60 runs/month)
+- **OpenAI (gpt-4o-mini + occasional gpt-4o for CV placeholders):** ~$0.20–0.60/day
+- **CloudConvert:** Free up to 25 PDFs/day
 - **Gmail:** Free
-- **Total:** ~$10-25/month (Claude API only)

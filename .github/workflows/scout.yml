@@ -11,7 +11,7 @@ on:
 jobs:
   scout:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 20
 
     steps:
       - name: Checkout
@@ -26,25 +26,22 @@ jobs:
       - name: Install dependencies
         run: pip install -r requirements.txt
 
-      - name: Install LaTeX (for resume tailoring)
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y texlive-latex-base texlive-latex-extra texlive-fonts-recommended texlive-latex-recommended
-
       - name: Run Job Scout
         env:
-          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
           GMAIL_ADDRESS: ${{ secrets.GMAIL_ADDRESS }}
           GMAIL_APP_PASSWORD: ${{ secrets.GMAIL_APP_PASSWORD }}
-          ADZUNA_APP_ID: ${{ secrets.ADZUNA_APP_ID }}
-          ADZUNA_APP_KEY: ${{ secrets.ADZUNA_APP_KEY }}
+          CLOUDCONVERT_API_KEY: ${{ secrets.CLOUDCONVERT_API_KEY }}
+          CONVERTAPI_SECRET: ${{ secrets.CONVERTAPI_SECRET }}
+          CV_PATH: ${{ github.workspace }}/templates/cv.pdf
+          CV_TEMPLATE_PATH: ${{ github.workspace }}/templates/cv_template.docx
         run: python -m src.main
 
-      - name: Upload artifacts (tailored resumes)
+      - name: Upload artifacts (tailored CVs)
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: tailored-resumes-${{ github.run_number }}
+          name: tailored-cvs-${{ github.run_number }}
           path: output/*.pdf
           retention-days: 30
           if-no-files-found: ignore

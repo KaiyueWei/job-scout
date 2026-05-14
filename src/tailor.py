@@ -1,202 +1,225 @@
 """
-Resume tailor module.
-Generates tailored LaTeX resumes based on the recommended variant
-and tailoring notes from the scorer.
+Customize a DOCX CV template per high-scoring job offer and convert to PDF.
 
-SETUP: Place your base LaTeX resume template at templates/base_resume.tex
-Use these placeholders in your template:
-  {{SUMMARY}} — will be replaced with a role-specific summary line
-  {{SKILLS_LINE}} — will be replaced with reordered skills emphasis
-
-The module modifies the summary and skills ordering based on the variant.
-For a full auto-rewrite of bullets, you'd need to expand this with Claude API calls.
+Placeholder substitution uses python-docx. PDF conversion uses CloudConvert,
+with ConvertAPI as a fallback. Mirrors customize_cv.py in
+pietroruzzante/linkedin_scraper_pipeline.
 """
 
+from __future__ import annotations
+
+import glob
+import json
 import logging
 import os
 import re
-import subprocess
 from pathlib import Path
 
-from src.scorer import ScoredJob
+import requests
+from docx import Document
+from docx.shared import Pt, RGBColor
+from langchain_core.prompts import ChatPromptTemplate
+from langchain_openai import ChatOpenAI
+from pydantic import BaseModel
+
+from src.prompts import CV_PLACEHOLDER_PROMPT
+from src.scorer import ScoredJob, extract_keywords
 
 logger = logging.getLogger(__name__)
 
 OUTPUT_DIR = "output"
 
-# Pre-defined summary lines per variant
-VARIANT_SUMMARIES = {
-    "backend_sde": (
-        "Go backend developer experienced in building scalable REST APIs, event-driven microservices, "
-        "and AI-augmented development workflows, with a strong analytical foundation from six years "
-        "in intellectual property law."
-    ),
-    "devops_sre": (
-        "Infrastructure and reliability engineer experienced in Terraform, Kubernetes, Docker, "
-        "and CI/CD pipeline optimization. Open-source contributor to HashiCorp Terraform AWS Provider, "
-        "with a strong analytical foundation from six years in intellectual property law."
-    ),
-    "fullstack": (
-        "Full-stack developer experienced in building scalable web platforms with Node.js/TypeScript "
-        "backends and cloud-native infrastructure including PostgreSQL, Redis, and Docker, "
-        "with a strong analytical foundation from six years in intellectual property law."
-    ),
-    "cyber_risk": (
-        "Cybersecurity-focused developer with kernel-level security research (eBPF), competitive "
-        "CTF experience (CyberSci Regional top 6), and six years of regulatory compliance "
-        "background in intellectual property law."
-    ),
-}
 
-# Skills line ordering per variant (front-load the most relevant)
-VARIANT_SKILLS_EMPHASIS = {
-    "backend_sde": (
-        "\\textbf{Languages:} Go, Python, TypeScript, C/C++, Bash, SQL \\\\\n"
-        "\\textbf{Cloud \\& Infrastructure:} GCP (GKE, BigQuery), AWS (EC2, S3, CloudWatch), "
-        "Docker, Kubernetes, Terraform, CI/CD \\\\\n"
-        "\\textbf{Data \\& Messaging:} PostgreSQL, MongoDB, Redis, RabbitMQ, Stripe \\\\\n"
-        "\\textbf{Systems \\& Observability:} Linux, Jaeger, distributed tracing, performance analysis, "
-        "automated testing, Git \\\\\n"
-        "\\textbf{AI Development Tools:} GitHub Copilot, Cursor, Claude -- integrated into daily "
-        "development for code generation, debugging, and testing"
-    ),
-    "devops_sre": (
-        "\\textbf{Cloud \\& Infrastructure:} Terraform, Docker, Kubernetes, AWS (EC2, S3, CloudWatch), "
-        "GCP (GKE, BigQuery), CI/CD, GitHub Actions \\\\\n"
-        "\\textbf{Languages:} Go, Python, Bash, TypeScript, C/C++, HCL, SQL \\\\\n"
-        "\\textbf{Systems \\& Observability:} Linux, Jaeger, distributed tracing, CloudWatch, "
-        "performance analysis, automated testing, Git \\\\\n"
-        "\\textbf{Data \\& Messaging:} PostgreSQL, MongoDB, Redis, RabbitMQ \\\\\n"
-        "\\textbf{AI Development Tools:} GitHub Copilot, Cursor, Claude -- integrated into daily "
-        "development for code generation, debugging, and testing"
-    ),
-    "fullstack": (
-        "\\textbf{Languages:} TypeScript, Go, Python, C/C++, Bash, SQL \\\\\n"
-        "\\textbf{Backend \\& Data:} Node.js, Express, PostgreSQL, MongoDB, Redis, RabbitMQ, "
-        "Stripe Connect, REST APIs, WebSocket \\\\\n"
-        "\\textbf{Cloud \\& Infrastructure:} GCP (GKE, BigQuery), AWS (EC2, S3, CloudWatch), "
-        "Docker, Kubernetes, Terraform, CI/CD \\\\\n"
-        "\\textbf{Systems \\& Observability:} Linux, Jaeger, distributed tracing, performance analysis, "
-        "automated testing, Git \\\\\n"
-        "\\textbf{AI Development Tools:} GitHub Copilot, Cursor, Claude -- integrated into daily "
-        "development for code generation, debugging, and testing"
-    ),
-    "cyber_risk": (
-        "\\textbf{Security:} Ghidra, OWASP vulnerability assessment, digital forensics, "
-        "reverse engineering, kernel observability (eBPF) \\\\\n"
-        "\\textbf{Languages:} Go, Python, C/C++, TypeScript, Bash, SQL \\\\\n"
-        "\\textbf{Cloud \\& Infrastructure:} AWS (EC2, S3, CloudWatch), GCP, Docker, Kubernetes, "
-        "Terraform, CI/CD \\\\\n"
-        "\\textbf{Systems \\& Observability:} Linux, Jaeger, distributed tracing, performance analysis, "
-        "automated testing, Git \\\\\n"
-        "\\textbf{AI Development Tools:} GitHub Copilot, Cursor, Claude -- integrated into daily "
-        "development for code generation, debugging, and testing"
-    ),
-}
+class CVPlaceholders(BaseModel):
+    ROLE: str
+    CORE_COMPETENCIES: str
+    LIBRARIES: str
+    LANGUAGES: str
+    TOOLS: str
 
 
-def tailor_resume(scored_job: ScoredJob) -> str | None:
-    """
-    Generate a tailored resume PDF for a scored job.
-    Returns the path to the generated PDF, or None on failure.
-    """
-    template_path = Path("templates/base_resume.tex")
-    if not template_path.exists():
-        logger.error("Base resume template not found at templates/base_resume.tex")
-        return None
+def _placeholders_chain():
+    llm = ChatOpenAI(model="gpt-4o", temperature=0)
+    return (
+        ChatPromptTemplate.from_messages([("human", CV_PLACEHOLDER_PROMPT)])
+        | llm.with_structured_output(CVPlaceholders, method="function_calling")
+    )
 
+
+def _generate_placeholders(
+    scored_job: ScoredJob, candidate_profile: str, cv_skills: dict
+) -> dict:
+    """Run the placeholder LLM chain. Returns a dict of placeholder values."""
+    result = _placeholders_chain().invoke(
+        {
+            "profile": candidate_profile,
+            "job_description": scored_job.listing.description[:3000],
+            "keywords": json.dumps(scored_job.keywords),
+            "competencies": cv_skills.get("competencies", []),
+            "libraries": cv_skills.get("libraries", []),
+            "languages": cv_skills.get("languages", []),
+            "tools": cv_skills.get("tools", []),
+        }
+    )
+    if isinstance(result, dict):
+        result = CVPlaceholders(**result)
+    logger.info(f"  → ROLE={result.ROLE}")
+    return result.model_dump()
+
+
+def _replace_in_doc(doc: Document, placeholders: dict) -> None:
+    """Replace {{KEY}} tokens across all runs in the document."""
+    for paragraph in doc.paragraphs:
+        for run in paragraph.runs:
+            for key, value in placeholders.items():
+                token = f"{{{{{key}}}}}"
+                if token in run.text:
+                    run.text = run.text.replace(token, value)
+                    if key == "ROLE":
+                        run.bold = True
+                        run.font.size = Pt(14)
+                        run.font.color.rgb = RGBColor(0x1B, 0x73, 0xC8)
+
+
+def _convert_to_pdf(doc_path: str, pdf_path: str) -> None:
+    """Convert docx → pdf via CloudConvert, falling back to ConvertAPI."""
+    cc_key = os.environ.get("CLOUDCONVERT_API_KEY")
+    if cc_key:
+        try:
+            _cloudconvert_to_pdf(doc_path, pdf_path, cc_key)
+            return
+        except Exception as e:
+            logger.warning(f"CloudConvert failed ({e}); falling back to ConvertAPI")
+
+    ca_secret = os.environ.get("CONVERTAPI_SECRET")
+    if not ca_secret:
+        raise RuntimeError(
+            "PDF conversion failed: set CLOUDCONVERT_API_KEY and/or CONVERTAPI_SECRET"
+        )
+
+    import convertapi  # type: ignore
+
+    convertapi.api_credentials = ca_secret
+    convertapi.convert("pdf", {"File": doc_path}, from_format="docx").save_files(
+        os.path.dirname(pdf_path)
+    )
+    saved = sorted(
+        glob.glob(os.path.join(os.path.dirname(pdf_path), "*.pdf")),
+        key=os.path.getmtime,
+    )
+    if not saved:
+        raise RuntimeError("ConvertAPI did not produce a PDF file")
+    if saved[-1] != pdf_path:
+        os.rename(saved[-1], pdf_path)
+
+
+def _cloudconvert_to_pdf(doc_path: str, pdf_path: str, api_key: str) -> None:
+    import cloudconvert  # type: ignore
+
+    cloudconvert.configure(api_key=api_key)
+    job = cloudconvert.Job.create(
+        payload={
+            "tasks": {
+                "upload": {"operation": "import/upload"},
+                "convert": {
+                    "operation": "convert",
+                    "input": "upload",
+                    "input_format": "docx",
+                    "output_format": "pdf",
+                },
+                "export": {"operation": "export/url", "input": "convert"},
+            }
+        }
+    )
+    upload_task = next(t for t in job["tasks"] if t["name"] == "upload")
+    cloudconvert.Task.upload(file_name=doc_path, task=upload_task)
+    job = cloudconvert.Job.wait(id=job["id"])
+    export_task = next(t for t in job["tasks"] if t["name"] == "export")
+    url = export_task["result"]["files"][0]["url"]
+    response = requests.get(url, timeout=30)
+    response.raise_for_status()
+    with open(pdf_path, "wb") as f:
+        f.write(response.content)
+
+
+def _sanitize_filename(name: str) -> str:
+    clean = re.sub(r"[^\w\s-]", "", name)
+    clean = re.sub(r"\s+", "_", clean)
+    return clean[:40].strip("_").lower()
+
+
+def tailor_resume(
+    scored_job: ScoredJob,
+    template_path: str,
+    candidate_name: str,
+    candidate_profile: str,
+    cv_skills: dict,
+) -> str | None:
+    """Produce a tailored PDF for one offer. Returns PDF path or None."""
     os.makedirs(OUTPUT_DIR, exist_ok=True)
 
-    variant = scored_job.variant
+    if not scored_job.keywords:
+        try:
+            scored_job.keywords = extract_keywords(scored_job.listing.description)
+        except Exception as e:
+            logger.warning(f"Keyword extraction failed: {e}")
+
+    try:
+        placeholders = _generate_placeholders(scored_job, candidate_profile, cv_skills)
+    except Exception as e:
+        logger.error(f"Placeholder generation failed: {e}")
+        return None
+
+    doc = Document(template_path)
+    _replace_in_doc(doc, placeholders)
+
     company = _sanitize_filename(scored_job.listing.company)
-    title = _sanitize_filename(scored_job.listing.title)
+    name = _sanitize_filename(candidate_name)
+    base = f"CV_{name}_{company}"
+    doc_path = os.path.join(OUTPUT_DIR, f"{base}.docx")
+    pdf_path = os.path.join(OUTPUT_DIR, f"{base}.pdf")
+    doc.save(doc_path)
 
-    # Read template
-    template = template_path.read_text()
+    try:
+        _convert_to_pdf(doc_path, pdf_path)
+    except Exception as e:
+        logger.error(f"PDF conversion failed for {company}: {e}")
+        return None
 
-    # Apply variant-specific substitutions
-    summary = VARIANT_SUMMARIES.get(variant, VARIANT_SUMMARIES["backend_sde"])
-    skills = VARIANT_SKILLS_EMPHASIS.get(variant, VARIANT_SKILLS_EMPHASIS["backend_sde"])
-
-    tailored = template.replace("{{SUMMARY}}", summary)
-    tailored = template if "{{SUMMARY}}" not in template else tailored
-    tailored = tailored.replace("{{SKILLS_LINE}}", skills)
-
-    # Write tailored .tex file
-    tex_filename = f"resume_{company}_{title}.tex"
-    tex_path = os.path.join(OUTPUT_DIR, tex_filename)
-
-    # Sanitize for LaTeX (escape special chars in the substituted text)
-    with open(tex_path, 'w') as f:
-        f.write(tailored)
-
-    # Compile to PDF
-    pdf_path = _compile_latex(tex_path)
-    if pdf_path:
-        logger.info(f"Generated tailored resume: {pdf_path}")
-    else:
-        logger.warning(f"Failed to compile resume for {company} - {title}")
-
+    logger.info(f"Tailored resume: {pdf_path}")
     return pdf_path
 
 
 def tailor_resumes(scored_jobs: list[ScoredJob], config: dict) -> dict[str, str]:
-    """
-    Generate tailored resumes for all jobs above the tailor threshold.
-    Returns a dict mapping job_id -> pdf_path.
-    """
-    threshold = config.get("search", {}).get("tailor_threshold", 7)
-    results = {}
+    """Tailor PDFs for all jobs at or above the tailor threshold."""
+    threshold = config.get("search", {}).get("tailor_threshold", 8)
+    template_path = os.environ.get(
+        "CV_TEMPLATE_PATH", config.get("cv", {}).get("template_path", "templates/cv_template.docx")
+    )
+    if not Path(template_path).exists():
+        logger.error(
+            f"DOCX template not found at '{template_path}'. "
+            "Set CV_TEMPLATE_PATH or place templates/cv_template.docx."
+        )
+        return {}
 
-    high_scoring = [sj for sj in scored_jobs if sj.score >= threshold]
-    logger.info(f"Tailoring resumes for {len(high_scoring)} jobs (score >= {threshold})")
+    candidate_name = config.get("profile", {}).get("name", "Candidate")
+    candidate_profile = config.get("scoring", {}).get("candidate_profile", "")
+    cv_skills = config.get("cv", {})
 
-    for sj in high_scoring:
-        pdf_path = tailor_resume(sj)
+    results: dict[str, str] = {}
+    high = [sj for sj in scored_jobs if sj.score >= threshold]
+    logger.info(f"Tailoring {len(high)} resumes (score >= {threshold})")
+
+    for sj in high:
+        pdf_path = tailor_resume(
+            sj,
+            template_path=template_path,
+            candidate_name=candidate_name,
+            candidate_profile=candidate_profile,
+            cv_skills=cv_skills,
+        )
         if pdf_path:
             results[sj.listing.job_id] = pdf_path
 
     return results
-
-
-def _compile_latex(tex_path: str) -> str | None:
-    """Compile a .tex file to PDF using pdflatex."""
-    output_dir = os.path.dirname(tex_path)
-
-    try:
-        result = subprocess.run(
-            [
-                "pdflatex",
-                "-interaction=nonstopmode",
-                "-output-directory", output_dir,
-                tex_path,
-            ],
-            capture_output=True,
-            text=True,
-            timeout=30,
-        )
-
-        pdf_path = tex_path.replace(".tex", ".pdf")
-        if os.path.exists(pdf_path):
-            # Clean up auxiliary files
-            for ext in [".aux", ".log", ".out"]:
-                aux_file = tex_path.replace(".tex", ext)
-                if os.path.exists(aux_file):
-                    os.remove(aux_file)
-            return pdf_path
-        else:
-            logger.error(f"pdflatex produced no PDF. Stderr: {result.stderr[:500]}")
-            return None
-    except subprocess.TimeoutExpired:
-        logger.error(f"pdflatex timed out for {tex_path}")
-        return None
-    except FileNotFoundError:
-        logger.error("pdflatex not found — install texlive")
-        return None
-
-
-def _sanitize_filename(name: str) -> str:
-    """Sanitize a string for use in filenames."""
-    clean = re.sub(r'[^\w\s-]', '', name)
-    clean = re.sub(r'\s+', '_', clean)
-    return clean[:30].strip('_')
